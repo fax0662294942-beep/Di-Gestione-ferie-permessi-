@@ -342,11 +342,6 @@ function BalanceCard({ title, emoji, data, type }) {
 }
 
 // --- REQUEST LIST ---
-function RequestList({// ============================================================
-// CONTINUAZIONE app.js — REQUEST LIST, MODAL, FAB, MAIN APP
-// ============================================================
-
-// --- REQUEST LIST ---
 function RequestList({ entries, onDelete, onToggleObbligata, onConfirm, user, type }) {
     const filtered = entries.filter(e => e.tipo === type && !e.sim);
     if (filtered.length === 0) {
