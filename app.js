@@ -342,8 +342,7 @@ function BalanceCard({ title, emoji, data, type }) {
 }
 
 // --- REQUEST LIST ---
-function RequestList({
-// ============================================================
+function RequestList({// ============================================================
 // CONTINUAZIONE app.js — REQUEST LIST, MODAL, FAB, MAIN APP
 // ============================================================
 
@@ -1060,3 +1059,202 @@ function App() {
                     setDb(newDb);
                     localStorage.setItem('feriePermessi_v3', JSON.stringify(newDb));
                     alert('✅ Dati sincronizzati dal cloud');
+                } else {
+                    // Local è più recente
+                    await db.collection('feriePermessi_data').doc(uid).set({
+                        ...localData,
+                        lastModified: new Date().toISOString()
+                    }, { merge: true });
+                    alert('✅ Dati caricati sul cloud');
+                }
+            } else {
+                // Primo sync: carica local su cloud
+                const localData = JSON.parse(localStorage.getItem('feriePermessi_v3') || '{}');
+                await db.collection('feriePermessi_data').doc(uid).set({
+                    ...localData,
+                    lastModified: new Date().toISOString()
+                }, { merge: true });
+                alert('✅ Dati caricati sul cloud');
+            }
+        } catch (error) {
+            console.error('Sync error:', error);
+            alert('❌ Errore durante la sincronizzazione');
+        }
+        setIsLoading(false);
+    }, [isLoggedIn]);
+
+    // --- AUTH ---
+    const login = useCallback(() => {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).then(result => {
+            setIsLoggedIn(true);
+            // Carica dati dal cloud
+            syncFirebase();
+        }).catch(error => {
+            console.error('Login error:', error);
+            alert('❌ Errore login: ' + error.message);
+        });
+    }, [syncFirebase]);
+
+    const logout = useCallback(() => {
+        auth.signOut().then(() => {
+            setIsLoggedIn(false);
+        }).catch(console.error);
+    }, []);
+
+    // --- REGISTRAZIONE NUOVO UTENTE ---
+    const registerUser = useCallback((name, dataInizioContratto, calcMode) => {
+        const newUser = {
+            id: generateId(),
+            name,
+            dataInizioContratto,
+            calcMode: calcMode || '1',
+            workdayConfig: { escludiSabato: true, escludiDomenica: true },
+            festivita: getFestivitaItalia(new Date().getFullYear()),
+            anni: {
+                [new Date().getFullYear()]: { ferieAnnue: 26, permessiOreAnnui: 0 }
+            },
+            permessiCCNL: { anni02: 32, anni24: 68, anni5plus: 104 },
+            entries: []
+        };
+
+        const newDb = {
+            ...db,
+            users: [...db.users, newUser],
+            currentUserId: newUser.id
+        };
+
+        saveDb(newDb);
+    }, [db, saveDb]);
+
+    // --- RENDER ---
+    if (!currentUser) {
+        // Schermata di registrazione
+        return (
+            <div className="container" style={{ marginTop: 40 }}>
+                <div className="card" style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 48, marginBottom: 12 }}>👋</div>
+                    <h2 style={{ marginBottom: 8 }}>Benvenuto!</h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 20 }}>
+                        Configura il tuo profilo per iniziare
+                    </p>
+                    <form onSubmit={(e) => {
+                        e.preventDefault();
+                        const name = e.target.name.value;
+                        const data = e.target.dataAssunzione.value;
+                        const calc = e.target.calcMode.value;
+                        if (!name || !data) return alert('Compila tutti i campi');
+                        registerUser(name, data, calc);
+                    }}>
+                        <div className="form-group">
+                            <label>👤 Nome e Cognome</label>
+                            <input type="text" name="name" placeholder="Mario Rossi" required />
+                        </div>
+                        <div className="form-group">
+                            <label>📅 Data di assunzione</label>
+                            <input type="date" name="dataAssunzione" required />
+                        </div>
+                        <div className="form-group">
+                            <label>📋 Tipo contratto</label>
+                            <select name="calcMode" required>
+                                <option value="1">Standard (×1)</option>
+                                <option value="1.2">CCNL Commercio (×1.2)</option>
+                            </select>
+                        </div>
+                        <button type="submit" className="btn-primary">🚀 Inizia</button>
+                    </form>
+                    <div style={{ marginTop: 16 }}>
+                        <button onClick={login} className="btn-secondary" style={{ width: '100%' }}>
+                            🔑 Accedi con Google per sync
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // --- MAIN APP ---
+    return (
+        <>
+            <Header 
+                user={currentUser}
+                isLoggedIn={isLoggedIn}
+                onLogin={login}
+                onLogout={logout}
+                onSync={syncFirebase}
+                onUserChange={() => {
+                    // Cambia utente (versione semplificata)
+                    const altri = db.users.filter(u => u.id !== currentUser.id);
+                    if (altri.length === 0) return alert('Nessun altro utente');
+                    const names = altri.map(u => u.name).join(', ');
+                    const scelta = prompt(`Seleziona utente (scrivi il nome):\n${names}`);
+                    if (scelta) {
+                        const found = altri.find(u => u.name.toLowerCase() === scelta.toLowerCase());
+                        if (found) {
+                            const newDb = { ...db, currentUserId: found.id };
+                            saveDb(newDb);
+                        }
+                    }
+                }}
+            />
+            
+            <MonthNavigator 
+                month={currentMonth}
+                year={currentYear}
+                onChange={setCurrentMonth}
+                onYearChange={setCurrentYear}
+            />
+
+            <Tabs active={activeTab} onChange={setActiveTab} />
+
+            {activeTab === 'piano' && (
+                <PianoTab 
+                    user={currentUser}
+                    year={currentYear}
+                    month={currentMonth + 1}
+                    entries={entries}
+                    onAddEntry={addEntry}
+                    onDeleteEntry={deleteEntry}
+                    onToggleObbligata={toggleObbligata}
+                />
+            )}
+
+            {activeTab === 'simulazione' && (
+                <SimulazioneTab 
+                    user={currentUser}
+                    year={currentYear}
+                    month={currentMonth + 1}
+                    entries={entries}
+                    onAddEntry={addEntry}
+                    onDeleteEntry={deleteEntry}
+                    onConfirm={confirmSim}
+                />
+            )}
+
+            {activeTab === 'calendario' && (
+                <CalendarioTab 
+                    user={currentUser}
+                    year={currentYear}
+                    month={currentMonth + 1}
+                    entries={entries}
+                />
+            )}
+
+            {activeTab === 'statistiche' && (
+                <StatisticheTab 
+                    user={currentUser}
+                    year={currentYear}
+                    month={currentMonth + 1}
+                    entries={entries}
+                />
+            )}
+        </>
+    );
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
