@@ -1,15 +1,39 @@
 // ============================================================
-// FERIE & PERMESSI — React App (versione completa v20)
+// FERIE & PERMESSI — React App (versione completa)
 // ============================================================
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
 // ============================================================
-// CORE BUSINESS LOGIC
+// 1. UTILITY
 // ============================================================
 
-// --- Calcolo Pasquetta ---
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function calcolaMesiLavorati(dataInizioContratto, anno, mese) {
+    if (!dataInizioContratto) return mese;
+    const inizio = new Date(dataInizioContratto);
+    const fine = new Date(anno, mese - 1, 1);
+    if (inizio > fine) return 0;
+    const diffMesi = (fine.getFullYear() - inizio.getFullYear()) * 12 +
+                     (fine.getMonth() - inizio.getMonth()) + 1;
+    return Math.min(diffMesi, mese);
+}
+
+// ============================================================
+// 2. FESTIVITÀ
+// ============================================================
+
 function calcolaPasquetta(anno) {
+    // Algoritmo di Gauss per la Pasqua
     const a = anno % 19;
     const b = Math.floor(anno / 100);
     const c = anno % 100;
@@ -24,28 +48,28 @@ function calcolaPasquetta(anno) {
     const m = Math.floor((a + 11 * h + 22 * l) / 451);
     const mese = Math.floor((h + l - 7 * m + 114) / 31);
     const giorno = ((h + l - 7 * m + 114) % 31) + 1;
-    return new Date(anno, mese - 1, giorno + 1); // +1 per Pasquetta
+    const pasqua = new Date(anno, mese - 1, giorno);
+    pasqua.setDate(pasqua.getDate() + 1); // Pasquetta
+    return pasqua;
 }
 
-// --- Festività italiane ---
 function getFestivitaItalia(anno) {
     const pasquetta = calcolaPasquetta(anno);
     return [
-        { id: 'capodanno', name: 'Capodanno', month: 1, day: 1, ricorrente: true },
-        { id: 'epifania', name: 'Epifania', month: 1, day: 6, ricorrente: true },
+        { id: 'capodanno', name: 'Capodanno', month: 1, day: 1, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'epifania', name: 'Epifania', month: 1, day: 6, ricorrente: true, fromYear: null, untilYear: null },
         { id: 'pasquetta', name: 'Pasquetta', month: pasquetta.getMonth() + 1, day: pasquetta.getDate(), ricorrente: false, year: anno },
-        { id: 'liberazione', name: 'Liberazione', month: 4, day: 25, ricorrente: true },
-        { id: 'lavoratori', name: 'Lavoratori', month: 5, day: 1, ricorrente: true },
-        { id: 'repubblica', name: 'Repubblica', month: 6, day: 2, ricorrente: true },
-        { id: 'ferragosto', name: 'Ferragosto', month: 8, day: 15, ricorrente: true },
-        { id: 'ognissanti', name: 'Ognissanti', month: 11, day: 1, ricorrente: true },
-        { id: 'immacolata', name: 'Immacolata', month: 12, day: 8, ricorrente: true },
-        { id: 'natale', name: 'Natale', month: 12, day: 25, ricorrente: true },
-        { id: 'santo_ Stefano', name: 'Santo Stefano', month: 12, day: 26, ricorrente: true }
+        { id: 'liberazione', name: 'Liberazione', month: 4, day: 25, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'lavoratori', name: 'Lavoratori', month: 5, day: 1, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'repubblica', name: 'Repubblica', month: 6, day: 2, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'ferragosto', name: 'Ferragosto', month: 8, day: 15, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'ognissanti', name: 'Ognissanti', month: 11, day: 1, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'immacolata', name: 'Immacolata', month: 12, day: 8, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'natale', name: 'Natale', month: 12, day: 25, ricorrente: true, fromYear: null, untilYear: null },
+        { id: 'santo_stefano', name: 'Santo Stefano', month: 12, day: 26, ricorrente: true, fromYear: null, untilYear: null }
     ];
 }
 
-// --- Calcolo giorni lavorativi ---
 function calcolaGiorniLavorativi(dateFrom, dateTo, workdayConfig, festivita) {
     const start = new Date(dateFrom);
     const end = new Date(dateTo);
@@ -63,34 +87,61 @@ function calcolaGiorniLavorativi(dateFrom, dateTo, workdayConfig, festivita) {
             const mese = current.getMonth() + 1;
             const giorno = current.getDate();
             const anno = current.getFullYear();
-            for (const festa of festivita) {
+            
+            for (const festa of festivita || []) {
+                let isFesta = false;
+                
                 if (festa.ricorrente) {
-                    if (festa.month === mese && festa.day === giorno) {
-                        isLavorativo = false;
+                    const fromOk = festa.fromYear === null || anno >= festa.fromYear;
+                    const untilOk = festa.untilYear === null || anno <= festa.untilYear;
+                    if (fromOk && untilOk && festa.month === mese && festa.day === giorno) {
+                        isFesta = true;
                         break;
                     }
-                } else if (festa.year === anno) {
-                    if (festa.month === mese && festa.day === giorno) {
-                        isLavorativo = false;
+                } else {
+                    if (festa.year === anno && festa.month === mese && festa.day === giorno) {
+                        isFesta = true;
                         break;
                     }
                 }
+                
+                if (isFesta) {
+                    isLavorativo = false;
+                    break;
+                }
             }
         }
+        
         if (isLavorativo) giorni++;
         current.setDate(current.getDate() + 1);
     }
     return giorni;
 }
 
-// --- Scaglione permessi CCNL ---
+// ============================================================
+// 3. PERMESSI CCNL
+// ============================================================
+
 function getScaglionePermessi(anniServizioMesi) {
     if (anniServizioMesi < 24) return { label: '0-2 anni', oreAnnue: 32 };
     if (anniServizioMesi < 48) return { label: '2-4 anni', oreAnnue: 68 };
     return { label: '5+ anni', oreAnnue: 104 };
 }
 
-// --- Calcolo residuo anni precedenti (FIFO) ---
+function calcolaPermessiMensiliCCNL(dataAssunzione, anno, mese) {
+    if (!dataAssunzione) return 0;
+    const assunzione = new Date(dataAssunzione);
+    const dataRif = new Date(anno, mese - 1, 1);
+    const mesiDiff = (dataRif.getFullYear() - assunzione.getFullYear()) * 12 +
+                     (dataRif.getMonth() - assunzione.getMonth());
+    const scaglione = getScaglionePermessi(mesiDiff);
+    return scaglione.oreAnnue / 12;
+}
+
+// ============================================================
+// 4. CALCOLI SALDO (FIFO)
+// ============================================================
+
 function getResiduoAnniPrecedenti(user, annoCorrente) {
     const { dataInizioContratto, calcMode, anni, entries } = user;
     const annoInizio = dataInizioContratto ? new Date(dataInizioContratto).getFullYear() : Math.min(...Object.keys(anni).map(Number));
@@ -120,17 +171,15 @@ function getResiduoAnniPrecedenti(user, annoCorrente) {
     return { ferie: residuoFerie, permessi: residuoPermessi };
 }
 
-// --- Calcolo saldo completo ---
 function calcolaSaldo(user, anno, mese) {
+    if (!user) return null;
     const { dataInizioContratto, calcMode, anni, entries } = user;
     const prevRes = getResiduoAnniPrecedenti(user, anno);
     
-    // Maturazioni mese corrente
     const mesiLavorati = dataInizioContratto ? calcolaMesiLavorati(dataInizioContratto, anno, mese) : mese;
     const matFerieMensile = (anni[anno]?.ferieAnnue || 26) / 12;
     const matFerie = matFerieMensile * mesiLavorati;
     
-    // Permessi CCNL
     let matPermessi = 0;
     if (calcMode === '1.2') {
         for (let m = 1; m <= mese; m++) {
@@ -140,7 +189,6 @@ function calcolaSaldo(user, anno, mese) {
         matPermessi = (anni[anno]?.permessiOreAnnui || 0) / 12 * mese;
     }
     
-    // Voci del mese
     const vociFerie = entries.filter(e => 
         e.anno === anno && e.mese === mese && e.tipo === 'ferie' && !e.sim
     );
@@ -152,7 +200,6 @@ function calcolaSaldo(user, anno, mese) {
     const usedFerie = vociFerie.reduce((sum, e) => sum + e.qty * coeff, 0);
     const usedPermessi = vociPermessi.reduce((sum, e) => sum + e.qty, 0);
     
-    // FIFO
     let usedFromPrevFerie = Math.min(prevRes.ferie, usedFerie);
     let usedFromCurrFerie = Math.max(0, usedFerie - prevRes.ferie);
     
@@ -189,42 +236,39 @@ function calcolaSaldo(user, anno, mese) {
     };
 }
 
-// --- Utilità ---
-function calcolaMesiLavorati(dataInizioContratto, anno, mese) {
-    if (!dataInizioContratto) return mese;
-    const inizio = new Date(dataInizioContratto);
-    const fine = new Date(anno, mese - 1, 1);
-    if (inizio > fine) return 0;
-    const diffMesi = (fine.getFullYear() - inizio.getFullYear()) * 12 +
-                     (fine.getMonth() - inizio.getMonth()) + 1;
-    return Math.min(diffMesi, mese);
+// ============================================================
+// 5. GESTIONE FESTIVITÀ (CRUD)
+// ============================================================
+
+function aggiungiFestivita(user, festivita) {
+    const updatedUser = {
+        ...user,
+        festivita: [...(user.festivita || []), { 
+            id: generateId(),
+            ...festivita,
+            ricorrente: festivita.ricorrente !== false,
+            fromYear: festivita.fromYear || null,
+            untilYear: festivita.untilYear || null,
+            year: festivita.ricorrente ? null : (festivita.year || null)
+        }]
+    };
+    return updatedUser;
 }
 
-function calcolaPermessiMensiliCCNL(dataAssunzione, anno, mese) {
-    if (!dataAssunzione) return 0;
-    const assunzione = new Date(dataAssunzione);
-    const dataRif = new Date(anno, mese - 1, 1);
-    const mesiDiff = (dataRif.getFullYear() - assunzione.getFullYear()) * 12 +
-                     (dataRif.getMonth() - assunzione.getMonth());
-    const scaglione = getScaglionePermessi(mesiDiff);
-    return scaglione.oreAnnue / 12;
-}
-
-function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
-}
-
-function formatDate(dateStr) {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+function rimuoviFestivita(user, id) {
+    const updatedUser = {
+        ...user,
+        festivita: (user.festivita || []).filter(f => f.id !== id)
+    };
+    return updatedUser;
 }
 
 // ============================================================
-// COMPONENTI REACT
+// 6. COMPONENTI REACT
 // ============================================================
 
 // --- HEADER ---
-function Header({ user, onUserChange, onSync, onLogout, onLogin, isLoggedIn }) {
+function Header({ user, onUserChange, onSync, onLogout, onLogin, isLoggedIn, onOpenSettings }) {
     return (
         <header className="app-header">
             <div className="logo">
@@ -241,10 +285,13 @@ function Header({ user, onUserChange, onSync, onLogout, onLogin, isLoggedIn }) {
                     <button onClick={onLogin} title="Login">🔑</button>
                 )}
                 {user && (
-                    <div className="user-chip" onClick={onUserChange}>
-                        <div className="avatar">{user.name?.[0] || '?'}</div>
-                        <span className="name">{user.name || 'Utente'}</span>
-                    </div>
+                    <>
+                        <button onClick={onOpenSettings} title="Impostazioni" style={{ fontSize: 20 }}>⚙️</button>
+                        <div className="user-chip" onClick={onUserChange}>
+                            <div className="avatar">{user.name?.[0] || '?'}</div>
+                            <span className="name">{user.name || 'Utente'}</span>
+                        </div>
+                    </>
                 )}
             </div>
         </header>
@@ -257,21 +304,12 @@ function MonthNavigator({ month, year, onChange, onYearChange }) {
                   'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
     
     const prevMonth = () => {
-        if (month === 0) {
-            onChange(11);
-            onYearChange(year - 1);
-        } else {
-            onChange(month - 1);
-        }
+        if (month === 0) { onChange(11); onYearChange(year - 1); }
+        else { onChange(month - 1); }
     };
-    
     const nextMonth = () => {
-        if (month === 11) {
-            onChange(0);
-            onYearChange(year + 1);
-        } else {
-            onChange(month + 1);
-        }
+        if (month === 11) { onChange(0); onYearChange(year + 1); }
+        else { onChange(month + 1); }
     };
     
     return (
@@ -289,17 +327,13 @@ function Tabs({ active, onChange }) {
         { id: 'piano', label: '📋 Piano' },
         { id: 'simulazione', label: '🔮 Simula' },
         { id: 'calendario', label: '📅 Calendario' },
-        { id: 'statistiche', label: '📊 Statistiche' }
+        { id: 'statistiche', label: '📊 Statistiche' },
+        { id: 'impostazioni', label: '⚙️ Impostazioni' }
     ];
-    
     return (
         <div className="tabs">
             {tabs.map(t => (
-                <button
-                    key={t.id}
-                    className={`tab-btn ${active === t.id ? 'active' : ''}`}
-                    onClick={() => onChange(t.id)}
-                >
+                <button key={t.id} className={`tab-btn ${active === t.id ? 'active' : ''}`} onClick={() => onChange(t.id)}>
                     {t.label}
                 </button>
             ))}
@@ -311,12 +345,9 @@ function Tabs({ active, onChange }) {
 function BalanceCard({ title, emoji, data, type }) {
     const isFerie = type === 'ferie';
     const unit = isFerie ? 'gg' : 'h';
-    
     return (
         <div className="card">
-            <div className="card-title">
-                <span className="emoji">{emoji}</span> {title}
-            </div>
+            <div className="card-title"><span className="emoji">{emoji}</span> {title}</div>
             <div className="balance-grid">
                 <div className="balance-item">
                     <div className="label">Precedenti</div>
@@ -326,9 +357,7 @@ function BalanceCard({ title, emoji, data, type }) {
                 </div>
                 <div className="balance-item">
                     <div className="label">Correnti</div>
-                    <div className="value blue">
-                        {data.currResiduo.toFixed(1)} {unit}
-                    </div>
+                    <div className="value blue">{data.currResiduo.toFixed(1)} {unit}</div>
                 </div>
                 <div className="balance-item">
                     <div className="label">Totale</div>
@@ -342,19 +371,13 @@ function BalanceCard({ title, emoji, data, type }) {
 }
 
 // --- REQUEST LIST ---
-function RequestList({ entries, onDelete, onToggleObbligata, onConfirm, user, type }) {
+function RequestList({ entries, onDelete, onToggleObbligata, onConfirm, user, type, showConfirm }) {
     const filtered = entries.filter(e => e.tipo === type && !e.sim);
     if (filtered.length === 0) {
-        return (
-            <div className="empty-state">
-                <div className="emoji">📭</div>
-                <div>Nessuna voce</div>
-            </div>
-        );
+        return <div className="empty-state"><div className="emoji">📭</div><div>Nessuna voce</div></div>;
     }
 
     const coeff = user?.calcMode === '1.2' ? 1.2 : 1;
-
     return filtered.map(entry => {
         const isLiquidato = entry.tipo === 'permesso_pagato';
         const isObbligata = entry.obbligata || false;
@@ -378,35 +401,19 @@ function RequestList({ entries, onDelete, onToggleObbligata, onConfirm, user, ty
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     {!isLiquidato && (
-                        <button 
-                            onClick={() => onToggleObbligata(entry.id)}
-                            style={{ background: 'none', border: 'none', color: isObbligata ? 'var(--amber)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 18 }}
-                            title="Toggle obbligata"
-                        >
-                            🏢
-                        </button>
+                        <button onClick={() => onToggleObbligata(entry.id)} style={{ background: 'none', border: 'none', color: isObbligata ? 'var(--amber)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 18 }} title="Toggle obbligata">🏢</button>
                     )}
-                    {entry.sim && (
-                        <button 
-                            onClick={() => onConfirm(entry.id)}
-                            style={{ background: 'var(--green)', border: 'none', color: 'var(--bg)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-                        >
-                            ✅ Conferma
-                        </button>
+                    {showConfirm && entry.sim && (
+                        <button onClick={() => onConfirm(entry.id)} style={{ background: 'var(--green)', border: 'none', color: 'var(--bg)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>✅ Conferma</button>
                     )}
-                    <button 
-                        onClick={() => onDelete(entry.id)}
-                        style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 18 }}
-                    >
-                        🗑
-                    </button>
+                    <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 18 }}>🗑</button>
                 </div>
             </div>
         );
     });
 }
 
-// --- MODALE INSERIMENTO FERIE ---
+// --- MODALI ---
 function ModalFerie({ isOpen, onClose, onSave, user, year, month }) {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
@@ -416,12 +423,8 @@ function ModalFerie({ isOpen, onClose, onSave, user, year, month }) {
 
     useEffect(() => {
         if (isOpen) {
-            const oggi = new Date();
-            setDateFrom(oggi.toISOString().split('T')[0]);
-            setDateTo(oggi.toISOString().split('T')[0]);
-            setQty(1);
-            setNote('');
-            setObbligata(false);
+            const oggi = new Date().toISOString().split('T')[0];
+            setDateFrom(oggi); setDateTo(oggi); setQty(1); setNote(''); setObbligata(false);
         }
     }, [isOpen]);
 
@@ -438,51 +441,24 @@ function ModalFerie({ isOpen, onClose, onSave, user, year, month }) {
         e.preventDefault();
         if (!dateFrom || !dateTo) return alert('Inserisci le date');
         onSave({
-            tipo: 'ferie',
-            dateFrom,
-            dateTo,
-            qty: qty,
-            note: note || 'Ferie',
-            mese: new Date(dateFrom).getMonth() + 1,
-            anno: new Date(dateFrom).getFullYear(),
-            obbligata,
-            sim: false
+            tipo: 'ferie', dateFrom, dateTo, qty, note: note || 'Ferie',
+            mese: new Date(dateFrom).getMonth() + 1, anno: new Date(dateFrom).getFullYear(),
+            obbligata, sim: false
         });
         onClose();
     };
 
     if (!isOpen) return null;
-
     return (
         <div className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && onClose()}>
             <div className="modal-content">
-                <div className="modal-header">
-                    <h2>🌴 Inserisci Ferie</h2>
-                    <button className="modal-close" onClick={onClose}>✕</button>
-                </div>
+                <div className="modal-header"><h2>🌴 Inserisci Ferie</h2><button className="modal-close" onClick={onClose}>✕</button></div>
                 <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Data inizio</label>
-                        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Data fine</label>
-                        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Quantità (gg) {user?.calcMode === '1.2' && <span style={{ color: 'var(--amber)' }}>×1.2</span>}</label>
-                        <input type="number" step="0.5" value={qty} onChange={(e) => setQty(parseFloat(e.target.value) || 0)} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Note</label>
-                        <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Motivo..." />
-                    </div>
-                    <div className="form-group">
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={obbligata} onChange={(e) => setObbligata(e.target.checked)} />
-                            🏢 Chiusura aziendale (obbligata)
-                        </label>
-                    </div>
+                    <div className="form-group"><label>Data inizio</label><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} required /></div>
+                    <div className="form-group"><label>Data fine</label><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} required /></div>
+                    <div className="form-group"><label>Quantità (gg) {user?.calcMode === '1.2' && <span style={{ color: 'var(--amber)' }}>×1.2</span>}</label><input type="number" step="0.5" value={qty} onChange={(e) => setQty(parseFloat(e.target.value) || 0)} required /></div>
+                    <div className="form-group"><label>Note</label><input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Motivo..." /></div>
+                    <div className="form-group"><label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={obbligata} onChange={(e) => setObbligata(e.target.checked)} /> 🏢 Chiusura aziendale (obbligata)</label></div>
                     <button type="submit" className="btn-primary">✅ Inserisci</button>
                 </form>
             </div>
@@ -490,7 +466,6 @@ function ModalFerie({ isOpen, onClose, onSave, user, year, month }) {
     );
 }
 
-// --- MODALE INSERIMENTO PERMESSO ---
 function ModalPermesso({ isOpen, onClose, onSave }) {
     const [date, setDate] = useState('');
     const [ore, setOre] = useState(8);
@@ -500,9 +475,7 @@ function ModalPermesso({ isOpen, onClose, onSave }) {
     useEffect(() => {
         if (isOpen) {
             setDate(new Date().toISOString().split('T')[0]);
-            setOre(8);
-            setNote('');
-            setObbligata(false);
+            setOre(8); setNote(''); setObbligata(false);
         }
     }, [isOpen]);
 
@@ -510,47 +483,23 @@ function ModalPermesso({ isOpen, onClose, onSave }) {
         e.preventDefault();
         if (!date) return alert('Inserisci la data');
         onSave({
-            tipo: 'permesso',
-            dateFrom: date,
-            dateTo: date,
-            qty: ore,
-            note: note || 'Permesso',
-            mese: new Date(date).getMonth() + 1,
-            anno: new Date(date).getFullYear(),
-            obbligata,
-            sim: false
+            tipo: 'permesso', dateFrom: date, dateTo: date, qty: ore, note: note || 'Permesso',
+            mese: new Date(date).getMonth() + 1, anno: new Date(date).getFullYear(),
+            obbligata, sim: false
         });
         onClose();
     };
 
     if (!isOpen) return null;
-
     return (
         <div className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && onClose()}>
             <div className="modal-content">
-                <div className="modal-header">
-                    <h2>🕐 Inserisci Permesso</h2>
-                    <button className="modal-close" onClick={onClose}>✕</button>
-                </div>
+                <div className="modal-header"><h2>🕐 Inserisci Permesso</h2><button className="modal-close" onClick={onClose}>✕</button></div>
                 <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label>Data</label>
-                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Ore</label>
-                        <input type="number" step="0.5" value={ore} onChange={(e) => setOre(parseFloat(e.target.value) || 0)} required />
-                    </div>
-                    <div className="form-group">
-                        <label>Note</label>
-                        <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Motivo..." />
-                    </div>
-                    <div className="form-group">
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={obbligata} onChange={(e) => setObbligata(e.target.checked)} />
-                            🏢 Chiusura aziendale (obbligata)
-                        </label>
-                    </div>
+                    <div className="form-group"><label>Data</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></div>
+                    <div className="form-group"><label>Ore</label><input type="number" step="0.5" value={ore} onChange={(e) => setOre(parseFloat(e.target.value) || 0)} required /></div>
+                    <div className="form-group"><label>Note</label><input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Motivo..." /></div>
+                    <div className="form-group"><label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={obbligata} onChange={(e) => setObbligata(e.target.checked)} /> 🏢 Chiusura aziendale (obbligata)</label></div>
                     <button type="submit" className="btn-primary">✅ Inserisci</button>
                 </form>
             </div>
@@ -558,7 +507,6 @@ function ModalPermesso({ isOpen, onClose, onSave }) {
     );
 }
 
-// --- MODALE LIQUIDA PERMESSI ---
 function ModalLiquida({ isOpen, onClose, onSave, user, year }) {
     const [mese, setMese] = useState(new Date().getMonth() + 1);
     const [ore, setOre] = useState(0);
@@ -566,7 +514,6 @@ function ModalLiquida({ isOpen, onClose, onSave, user, year }) {
 
     useEffect(() => {
         if (isOpen && user) {
-            // Calcola saldo disponibile
             const saldo = calcolaSaldo(user, year, mese);
             setOre(Math.max(0, saldo.totali.permessi));
         }
@@ -579,53 +526,36 @@ function ModalLiquida({ isOpen, onClose, onSave, user, year }) {
             tipo: 'permesso_pagato',
             dateFrom: `${year}-${String(mese).padStart(2, '0')}-01`,
             dateTo: `${year}-${String(mese).padStart(2, '0')}-01`,
-            qty: ore,
-            note: note || 'Liquidazione permessi',
-            mese,
-            anno: year,
-            obbligata: false,
-            sim: false
+            qty: ore, note: note || 'Liquidazione permessi',
+            mese, anno: year, obbligata: false, sim: false
         });
         onClose();
     };
 
     if (!isOpen) return null;
-
     return (
         <div className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && onClose()}>
             <div className="modal-content">
-                <div className="modal-header">
-                    <h2>💰 Liquida Permessi</h2>
-                    <button className="modal-close" onClick={onClose}>✕</button>
-                </div>
+                <div className="modal-header"><h2>💰 Liquida Permessi</h2><button className="modal-close" onClick={onClose}>✕</button></div>
                 <form onSubmit={handleSubmit}>
                     <div className="form-row">
-                        <div className="form-group">
-                            <label>Mese</label>
+                        <div className="form-group"><label>Mese</label>
                             <select value={mese} onChange={(e) => setMese(parseInt(e.target.value))}>
                                 {Array.from({ length: 12 }, (_, i) => (
-                                    <option key={i + 1} value={i + 1}>
-                                        {new Date(0, i).toLocaleString('it', { month: 'long' })}
-                                    </option>
+                                    <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('it', { month: 'long' })}</option>
                                 ))}
                             </select>
                         </div>
-                        <div className="form-group">
-                            <label>Anno</label>
-                            <input type="number" value={year} disabled style={{ opacity: 0.7 }} />
-                        </div>
+                        <div className="form-group"><label>Anno</label><input type="number" value={year} disabled style={{ opacity: 0.7 }} /></div>
                     </div>
                     <div className="form-group">
                         <label>Ore da liquidare</label>
                         <input type="number" step="0.5" value={ore} onChange={(e) => setOre(parseFloat(e.target.value) || 0)} required />
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                            Saldo disponibile al mese {mese}: {calcolaSaldo(user, year, mese).totali.permessi.toFixed(1)}h
+                            Saldo disponibile al mese {mese}: {user ? calcolaSaldo(user, year, mese).totali.permessi.toFixed(1) : 0}h
                         </div>
                     </div>
-                    <div className="form-group">
-                        <label>Note</label>
-                        <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
-                    </div>
+                    <div className="form-group"><label>Note</label><input type="text" value={note} onChange={(e) => setNote(e.target.value)} /></div>
                     <button type="submit" className="btn-primary" style={{ background: 'var(--amber)' }}>💰 Conferma</button>
                 </form>
             </div>
@@ -633,26 +563,122 @@ function ModalLiquida({ isOpen, onClose, onSave, user, year }) {
     );
 }
 
-// --- TAB PIANO UFFICIALE ---
+// --- GESTIONE FESTIVITÀ ---
+function FestivitaManager({ user, onUpdate }) {
+    const [nome, setNome] = useState('');
+    const [giorno, setGiorno] = useState(1);
+    const [mese, setMese] = useState(1);
+    const [ricorrente, setRicorrente] = useState(true);
+    const [fromYear, setFromYear] = useState('');
+    const [untilYear, setUntilYear] = useState('');
+    const [annoSpecifico, setAnnoSpecifico] = useState(new Date().getFullYear());
+
+    const handleAggiungi = (e) => {
+        e.preventDefault();
+        if (!nome || !giorno || !mese) { alert('Compila tutti i campi'); return; }
+        const nuova = {
+            name: nome, day: parseInt(giorno), month: parseInt(mese),
+            ricorrente: ricorrente,
+            fromYear: fromYear ? parseInt(fromYear) : null,
+            untilYear: untilYear ? parseInt(untilYear) : null,
+            year: ricorrente ? null : parseInt(annoSpecifico)
+        };
+        if (ricorrente && fromYear && untilYear && parseInt(fromYear) > parseInt(untilYear)) {
+            alert('L\'anno di inizio deve essere minore o uguale all\'anno di fine');
+            return;
+        }
+        const updatedUser = aggiungiFestivita(user, nuova);
+        onUpdate(updatedUser);
+        setNome(''); setGiorno(1); setMese(1); setFromYear(''); setUntilYear('');
+    };
+
+    const handleRimuovi = (id) => {
+        if (confirm('Rimuovere questa festività?')) {
+            const updatedUser = rimuoviFestivita(user, id);
+            onUpdate(updatedUser);
+        }
+    };
+
+    const festivita = user.festivita || getFestivitaItalia(new Date().getFullYear());
+
+    return (
+        <div className="card">
+            <div className="card-title">📅 Festività</div>
+            <div style={{ marginBottom: 16 }}>
+                {festivita.map(f => (
+                    <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', marginBottom: 4 }}>
+                        <span>
+                            {f.name}
+                            <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>
+                                {f.day}/{f.month}
+                                {f.ricorrente ? (
+                                    <>
+                                        {f.fromYear ? ` dal ${f.fromYear}` : ''}
+                                        {f.untilYear ? ` fino al ${f.untilYear}` : ''}
+                                        {!f.fromYear && !f.untilYear ? ' (ogni anno)' : ''}
+                                    </>
+                                ) : ` (solo ${f.year})`}
+                            </span>
+                        </span>
+                        <button onClick={() => handleRimuovi(f.id)} style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer' }}>🗑</button>
+                    </div>
+                ))}
+            </div>
+            <form onSubmit={handleAggiungi} style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                <div className="form-row"><div className="form-group"><label>Nome</label><input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Festa patronale" required /></div></div>
+                <div className="form-row">
+                    <div className="form-group"><label>Giorno</label><input type="number" min="1" max="31" value={giorno} onChange={(e) => setGiorno(parseInt(e.target.value) || 1)} required /></div>
+                    <div className="form-group"><label>Mese</label>
+                        <select value={mese} onChange={(e) => setMese(parseInt(e.target.value))}>
+                            {Array.from({ length: 12 }, (_, i) => (
+                                <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('it', { month: 'long' })}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+                <div className="form-group"><label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="checkbox" checked={ricorrente} onChange={(e) => setRicorrente(e.target.checked)} />
+                    Ogni anno (se deselezionato, solo quest'anno)
+                </label></div>
+                {ricorrente && (
+                    <div className="form-row">
+                        <div className="form-group"><label>Valida da anno (opzionale)</label>
+                            <input type="number" value={fromYear} onChange={(e) => setFromYear(e.target.value)} placeholder="es. 2026" min="1900" />
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Lascia vuoto per sempre</div>
+                        </div>
+                        <div className="form-group"><label>Valida fino anno (opzionale)</label>
+                            <input type="number" value={untilYear} onChange={(e) => setUntilYear(e.target.value)} placeholder="es. 2025" min="1900" />
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Lascia vuoto per sempre</div>
+                        </div>
+                    </div>
+                )}
+                {!ricorrente && (
+                    <div className="form-group"><label>Anno specifico</label>
+                        <input type="number" value={annoSpecifico} onChange={(e) => setAnnoSpecifico(parseInt(e.target.value))} />
+                    </div>
+                )}
+                <button type="submit" className="btn-primary" style={{ marginTop: 8 }}>➕ Aggiungi festività</button>
+            </form>
+        </div>
+    );
+}
+
+// ============================================================
+// 7. TAB PIANO UFFICIALE
+// ============================================================
+
 function PianoTab({ user, year, month, entries, onAddEntry, onDeleteEntry, onToggleObbligata }) {
     const [modalFerie, setModalFerie] = useState(false);
     const [modalPermesso, setModalPermesso] = useState(false);
     const [modalLiquida, setModalLiquida] = useState(false);
 
     const saldo = calcolaSaldo(user, year, month);
+    if (!saldo) return <div className="container"><div className="card">Errore: utente non valido</div></div>;
+
     const vociMese = entries.filter(e => e.anno === year && e.mese === month && !e.sim);
 
-    const ferieData = {
-        prevResiduo: saldo.prev.residuoFerie,
-        currResiduo: saldo.current.residuoFerie,
-        totale: saldo.totali.ferie
-    };
-
-    const permessiData = {
-        prevResiduo: saldo.prev.residuoPermessi,
-        currResiduo: saldo.current.residuoPermessi,
-        totale: saldo.totali.permessi
-    };
+    const ferieData = { prevResiduo: saldo.prev.residuoFerie, currResiduo: saldo.current.residuoFerie, totale: saldo.totali.ferie };
+    const permessiData = { prevResiduo: saldo.prev.residuoPermessi, currResiduo: saldo.current.residuoPermessi, totale: saldo.totali.permessi };
 
     return (
         <>
@@ -674,19 +700,14 @@ function PianoTab({ user, year, month, entries, onAddEntry, onDeleteEntry, onTog
                     </div>
                 </div>
 
-                <div className="card">
-                    <div className="card-title">🌴 Ferie</div>
-                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="ferie" />
+                <div className="card"><div className="card-title">🌴 Ferie</div>
+                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="ferie" showConfirm={false} />
                 </div>
-
-                <div className="card">
-                    <div className="card-title">🕐 Permessi</div>
-                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="permesso" />
+                <div className="card"><div className="card-title">🕐 Permessi</div>
+                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="permesso" showConfirm={false} />
                 </div>
-
-                <div className="card">
-                    <div className="card-title">💰 Permessi Liquidati</div>
-                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="permesso_pagato" />
+                <div className="card"><div className="card-title">💰 Permessi Liquidati</div>
+                    <RequestList entries={vociMese} onDelete={onDeleteEntry} onToggleObbligata={onToggleObbligata} user={user} type="permesso_pagato" showConfirm={false} />
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
@@ -696,31 +717,17 @@ function PianoTab({ user, year, month, entries, onAddEntry, onDeleteEntry, onTog
                 </div>
             </div>
 
-            <ModalFerie 
-                isOpen={modalFerie} 
-                onClose={() => setModalFerie(false)} 
-                onSave={onAddEntry} 
-                user={user} 
-                year={year} 
-                month={month} 
-            />
-            <ModalPermesso 
-                isOpen={modalPermesso} 
-                onClose={() => setModalPermesso(false)} 
-                onSave={onAddEntry} 
-            />
-            <ModalLiquida 
-                isOpen={modalLiquida} 
-                onClose={() => setModalLiquida(false)} 
-                onSave={onAddEntry} 
-                user={user} 
-                year={year} 
-            />
+            <ModalFerie isOpen={modalFerie} onClose={() => setModalFerie(false)} onSave={onAddEntry} user={user} year={year} month={month} />
+            <ModalPermesso isOpen={modalPermesso} onClose={() => setModalPermesso(false)} onSave={onAddEntry} />
+            <ModalLiquida isOpen={modalLiquida} onClose={() => setModalLiquida(false)} onSave={onAddEntry} user={user} year={year} />
         </>
     );
 }
 
-// --- TAB SIMULAZIONE ---
+// ============================================================
+// 8. TAB SIMULAZIONE
+// ============================================================
+
 function SimulazioneTab({ entries, onAddEntry, onDeleteEntry, onConfirm, user, year, month }) {
     const [modalFerie, setModalFerie] = useState(false);
     const [modalPermesso, setModalPermesso] = useState(false);
@@ -734,53 +741,24 @@ function SimulazioneTab({ entries, onAddEntry, onDeleteEntry, onConfirm, user, y
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
                     Le voci simulate non influenzano il piano ufficiale. Usa "Conferma" per spostarle.
                 </div>
-                <RequestList 
-                    entries={vociSim} 
-                    onDelete={onDeleteEntry} 
-                    onToggleObbligata={() => {}} 
-                    onConfirm={onConfirm}
-                    user={user} 
-                    type="ferie" 
-                />
-                <RequestList 
-                    entries={vociSim} 
-                    onDelete={onDeleteEntry} 
-                    onToggleObbligata={() => {}} 
-                    onConfirm={onConfirm}
-                    user={user} 
-                    type="permesso" 
-                />
-                {vociSim.length === 0 && (
-                    <div className="empty-state">
-                        <div className="emoji">🔮</div>
-                        <div>Nessuna simulazione</div>
-                    </div>
-                )}
+                <RequestList entries={vociSim} onDelete={onDeleteEntry} onToggleObbligata={() => {}} onConfirm={onConfirm} user={user} type="ferie" showConfirm={true} />
+                <RequestList entries={vociSim} onDelete={onDeleteEntry} onToggleObbligata={() => {}} onConfirm={onConfirm} user={user} type="permesso" showConfirm={true} />
+                {vociSim.length === 0 && <div className="empty-state"><div className="emoji">🔮</div><div>Nessuna simulazione</div></div>}
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button className="btn-primary" onClick={() => setModalFerie(true)}>🔮 Simula Ferie</button>
                 <button className="btn-primary" onClick={() => setModalPermesso(true)}>🔮 Simula Permesso</button>
             </div>
-
-            <ModalFerie 
-                isOpen={modalFerie} 
-                onClose={() => setModalFerie(false)} 
-                onSave={(entry) => onAddEntry({ ...entry, sim: true })} 
-                user={user} 
-                year={year} 
-                month={month} 
-            />
-            <ModalPermesso 
-                isOpen={modalPermesso} 
-                onClose={() => setModalPermesso(false)} 
-                onSave={(entry) => onAddEntry({ ...entry, sim: true })} 
-            />
+            <ModalFerie isOpen={modalFerie} onClose={() => setModalFerie(false)} onSave={(entry) => onAddEntry({ ...entry, sim: true })} user={user} year={year} month={month} />
+            <ModalPermesso isOpen={modalPermesso} onClose={() => setModalPermesso(false)} onSave={(entry) => onAddEntry({ ...entry, sim: true })} />
         </div>
     );
 }
 
-// --- TAB CALENDARIO ---
+// ============================================================
+// 9. TAB CALENDARIO
+// ============================================================
+
 function CalendarioTab({ user, year, month, entries }) {
     const giorniMese = new Date(year, month, 0).getDate();
     const primoGiorno = new Date(year, month - 1, 1).getDay();
@@ -791,7 +769,6 @@ function CalendarioTab({ user, year, month, entries }) {
     for (let d = 1; d <= giorniMese; d++) giorni.push(d);
 
     const vociMese = entries.filter(e => e.anno === year && e.mese === month);
-
     const getDayEntries = (day) => {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         return vociMese.filter(e => e.dateFrom === dateStr || e.dateTo === dateStr);
@@ -835,7 +812,6 @@ function CalendarioTab({ user, year, month, entries }) {
                     })}
                 </div>
             </div>
-
             <div className="card">
                 <div className="card-title">📌 Legenda</div>
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -849,90 +825,66 @@ function CalendarioTab({ user, year, month, entries }) {
 }
 
 // ============================================================
-// TAB STATISTICHE — VERSIONE COMPLETA CON FILTRI E GRAFICO
+// 10. TAB STATISTICHE (con filtri e grafico)
 // ============================================================
 
 function StatisticheTab({ user, year, month, entries }) {
-    const [periodo, setPeriodo] = useState('anno'); // 'mese' | 'anno' | 'totale'
-    const [filterTipo, setFilterTipo] = useState('tutti'); // 'tutti' | 'ferie' | 'permessi'
-    const [filterCategoria, setFilterCategoria] = useState('tutte'); // 'tutte' | 'obbligate' | 'richieste'
+    const [periodo, setPeriodo] = useState('anno');
+    const [filterTipo, setFilterTipo] = useState('tutti');
+    const [filterCategoria, setFilterCategoria] = useState('tutte');
 
-    // --- FILTRO PERIODO ---
     const getEntriesPeriodo = () => {
-        if (periodo === 'mese') {
-            return entries.filter(e => e.anno === year && e.mese === month + 1);
-        } else if (periodo === 'anno') {
-            return entries.filter(e => e.anno === year);
-        } else {
-            return entries; // totale storico
-        }
+        if (periodo === 'mese') return entries.filter(e => e.anno === year && e.mese === month + 1);
+        if (periodo === 'anno') return entries.filter(e => e.anno === year);
+        return entries;
     };
 
     const baseEntries = getEntriesPeriodo();
-
-    // --- FILTRO TIPO ---
     const filterByTipo = (list) => {
         if (filterTipo === 'ferie') return list.filter(e => e.tipo === 'ferie');
         if (filterTipo === 'permessi') return list.filter(e => e.tipo === 'permesso' || e.tipo === 'permesso_pagato');
         return list;
     };
-
-    // --- FILTRO CATEGORIA ---
     const filterByCategoria = (list) => {
         if (filterCategoria === 'obbligate') return list.filter(e => e.obbligata);
         if (filterCategoria === 'richieste') return list.filter(e => !e.obbligata);
         return list;
     };
 
-    // --- APPLICA FILTRI ---
     const filtered = filterByCategoria(filterByTipo(baseEntries));
-
-    // --- SEPARAZIONE PER TIPO (per statistiche) ---
     const ferie = filtered.filter(e => e.tipo === 'ferie' && !e.sim);
     const permessi = filtered.filter(e => (e.tipo === 'permesso' || e.tipo === 'permesso_pagato') && !e.sim);
     const obbligate = filtered.filter(e => e.obbligata && !e.sim);
     const richieste = filtered.filter(e => !e.obbligata && !e.sim);
 
-    // --- CALCOLI TOTALI ---
     const totalFerie = ferie.reduce((sum, e) => sum + e.qty, 0);
     const totalPermessi = permessi.reduce((sum, e) => sum + e.qty, 0);
     const totalObbligate = obbligate.reduce((sum, e) => sum + e.qty, 0);
     const totalRichieste = richieste.reduce((sum, e) => sum + e.qty, 0);
     const totaleGenerale = totalFerie + totalPermessi;
 
-    // --- DISTRIBUZIONE GIORNI SETTIMANA ---
     const getDistribuzione = () => {
         const giorni = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 0: 0 };
-        const giorniSettimana = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
-
         filtered.forEach(entry => {
-            // Per le ferie: conta i giorni effettivi nell'intervallo (escludendo weekend/festività)
             if (entry.tipo === 'ferie') {
                 const start = new Date(entry.dateFrom);
                 const end = new Date(entry.dateTo);
                 const current = new Date(start);
                 while (current <= end) {
                     const day = current.getDay();
-                    // Conta solo giorni feriali (Lun-Ven)
-                    if (day >= 1 && day <= 5) {
-                        giorni[day] = (giorni[day] || 0) + 1;
-                    }
+                    if (day >= 1 && day <= 5) giorni[day] = (giorni[day] || 0) + 1;
                     current.setDate(current.getDate() + 1);
                 }
             } else {
-                // Per i permessi: conta il giorno singolo (dateFrom)
                 const day = new Date(entry.dateFrom).getDay();
                 giorni[day] = (giorni[day] || 0) + 1;
             }
         });
-
         return giorni;
     };
 
     const distribuzione = getDistribuzione();
     const maxDistrib = Math.max(1, ...Object.values(distribuzione));
-
-    // --- NOMI GIORNI ---
     const giorniNomi = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
     return (
@@ -940,101 +892,51 @@ function StatisticheTab({ user, year, month, entries }) {
             <div className="card">
                 <div className="card-title">📊 Statistiche</div>
 
-                {/* --- FILTRI --- */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                    {/* Periodo */}
-                    <select 
-                        value={periodo} 
-                        onChange={(e) => setPeriodo(e.target.value)} 
-                        className="form-group" 
-                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
-                    >
+                    <select value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}>
                         <option value="mese">📅 Mese</option>
                         <option value="anno">📆 Anno</option>
                         <option value="totale">📚 Totale</option>
                     </select>
-
-                    {/* Tipo */}
-                    <select 
-                        value={filterTipo} 
-                        onChange={(e) => setFilterTipo(e.target.value)} 
-                        className="form-group" 
-                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
-                    >
+                    <select value={filterTipo} onChange={(e) => setFilterTipo(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}>
                         <option value="tutti">🌴+🕐 Tutti</option>
                         <option value="ferie">🌴 Solo Ferie</option>
                         <option value="permessi">🕐 Solo Permessi</option>
                     </select>
-
-                    {/* Categoria */}
-                    <select 
-                        value={filterCategoria} 
-                        onChange={(e) => setFilterCategoria(e.target.value)} 
-                        className="form-group" 
-                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
-                    >
+                    <select value={filterCategoria} onChange={(e) => setFilterCategoria(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}>
                         <option value="tutte">📋 Tutte</option>
                         <option value="obbligate">🏢 Obbligate</option>
                         <option value="richieste">👤 Richieste</option>
                     </select>
                 </div>
 
-                {/* --- STATISTICHE FERIE --- */}
                 <div style={{ marginBottom: 16 }}>
                     <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>🌴 Ferie</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} gg 
-                        ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) 
-                        · {obbligate.length} episodi
+                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} gg ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) · {obbligate.length} episodi
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        <span style={{ color: 'var(--green)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} gg 
-                        ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) 
-                        · {richieste.length} episodi
+                        <span style={{ color: 'var(--green)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} gg ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) · {richieste.length} episodi
                     </div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>
-                        Totale: {totaleGenerale.toFixed(1)} gg · {filtered.length} episodi
-                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>Totale: {totaleGenerale.toFixed(1)} gg · {filtered.length} episodi</div>
                 </div>
 
-                {/* --- STATISTICHE PERMESSI --- */}
                 <div style={{ marginBottom: 16 }}>
                     <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>🕐 Permessi</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} h 
-                        ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) 
-                        · {obbligate.length} episodi
+                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} h ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) · {obbligate.length} episodi
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        <span style={{ color: 'var(--blue)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} h 
-                        ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) 
-                        · {richieste.length} episodi
+                        <span style={{ color: 'var(--blue)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} h ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) · {richieste.length} episodi
                     </div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>
-                        Totale: {totaleGenerale.toFixed(1)} h · {filtered.length} episodi
-                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>Totale: {totaleGenerale.toFixed(1)} h · {filtered.length} episodi</div>
                 </div>
 
-                {/* --- BARRA OBBLIGATE VS RICHIESTE --- */}
                 <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                        📊 Obbligate vs Richieste
-                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>📊 Obbligate vs Richieste</div>
                     <div className="stats-bar">
-                        <div 
-                            className="segment obbligate" 
-                            style={{ 
-                                width: totaleGenerale > 0 ? `${(totalObbligate / totaleGenerale) * 100}%` : '0%',
-                                background: 'var(--amber)'
-                            }} 
-                        />
-                        <div 
-                            className="segment richieste" 
-                            style={{ 
-                                width: totaleGenerale > 0 ? `${(totalRichieste / totaleGenerale) * 100}%` : '0%',
-                                background: filterTipo === 'ferie' ? 'var(--green)' : filterTipo === 'permessi' ? 'var(--blue)' : 'linear-gradient(90deg, var(--green), var(--blue))'
-                            }} 
-                        />
+                        <div className="segment obbligate" style={{ width: totaleGenerale > 0 ? `${(totalObbligate / totaleGenerale) * 100}%` : '0%', background: 'var(--amber)' }} />
+                        <div className="segment richieste" style={{ width: totaleGenerale > 0 ? `${(totalRichieste / totaleGenerale) * 100}%` : '0%', background: filterTipo === 'ferie' ? 'var(--green)' : filterTipo === 'permessi' ? 'var(--blue)' : 'linear-gradient(90deg, var(--green), var(--blue))' }} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                         <span>🏢 Obbligate: {totalObbligate.toFixed(1)}</span>
@@ -1042,114 +944,29 @@ function StatisticheTab({ user, year, month, entries }) {
                     </div>
                 </div>
 
-                {/* --- DISTRIBUZIONE GIORNI SETTIMANA --- */}
                 <div style={{ marginTop: 16 }}>
-                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
-                        📅 Distribuzione giorni settimana
-                    </div>
-
-                    {/* Filtri per distribuzione */}
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>📅 Distribuzione giorni settimana</div>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-                        <button 
-                            className={`btn-secondary ${filterTipo === 'tutti' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterTipo === 'tutti' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterTipo === 'tutti' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterTipo('tutti')}
-                        >
-                            Ferie+Permessi
-                        </button>
-                        <button 
-                            className={`btn-secondary ${filterTipo === 'ferie' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterTipo === 'ferie' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterTipo === 'ferie' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterTipo('ferie')}
-                        >
-                            🌴 Ferie
-                        </button>
-                        <button 
-                            className={`btn-secondary ${filterTipo === 'permessi' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterTipo === 'permessi' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterTipo === 'permessi' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterTipo('permessi')}
-                        >
-                            🕐 Permessi
-                        </button>
+                        <button className={`btn-secondary ${filterTipo === 'tutti' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterTipo === 'tutti' ? 'var(--surface3)' : 'transparent', borderColor: filterTipo === 'tutti' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterTipo('tutti')}>Ferie+Permessi</button>
+                        <button className={`btn-secondary ${filterTipo === 'ferie' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterTipo === 'ferie' ? 'var(--surface3)' : 'transparent', borderColor: filterTipo === 'ferie' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterTipo('ferie')}>🌴 Ferie</button>
+                        <button className={`btn-secondary ${filterTipo === 'permessi' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterTipo === 'permessi' ? 'var(--surface3)' : 'transparent', borderColor: filterTipo === 'permessi' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterTipo('permessi')}>🕐 Permessi</button>
                     </div>
-
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-                        <button 
-                            className={`btn-secondary ${filterCategoria === 'tutte' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterCategoria === 'tutte' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterCategoria === 'tutte' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterCategoria('tutte')}
-                        >
-                            📋 Tutte
-                        </button>
-                        <button 
-                            className={`btn-secondary ${filterCategoria === 'obbligate' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterCategoria === 'obbligate' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterCategoria === 'obbligate' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterCategoria('obbligate')}
-                        >
-                            🏢 Obbligate
-                        </button>
-                        <button 
-                            className={`btn-secondary ${filterCategoria === 'richieste' ? 'active' : ''}`}
-                            style={{ 
-                                padding: '4px 12px', 
-                                fontSize: 12,
-                                background: filterCategoria === 'richieste' ? 'var(--surface3)' : 'transparent',
-                                borderColor: filterCategoria === 'richieste' ? 'var(--border)' : 'transparent'
-                            }}
-                            onClick={() => setFilterCategoria('richieste')}
-                        >
-                            👤 Richieste
-                        </button>
+                        <button className={`btn-secondary ${filterCategoria === 'tutte' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterCategoria === 'tutte' ? 'var(--surface3)' : 'transparent', borderColor: filterCategoria === 'tutte' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterCategoria('tutte')}>📋 Tutte</button>
+                        <button className={`btn-secondary ${filterCategoria === 'obbligate' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterCategoria === 'obbligate' ? 'var(--surface3)' : 'transparent', borderColor: filterCategoria === 'obbligate' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterCategoria('obbligate')}>🏢 Obbligate</button>
+                        <button className={`btn-secondary ${filterCategoria === 'richieste' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 12, background: filterCategoria === 'richieste' ? 'var(--surface3)' : 'transparent', borderColor: filterCategoria === 'richieste' ? 'var(--border)' : 'transparent' }} onClick={() => setFilterCategoria('richieste')}>👤 Richieste</button>
                     </div>
 
-                    {/* Grafico a barre orizzontali */}
                     {giorniNomi.map((nome, i) => {
                         const valore = distribuzione[i] || 0;
                         const percentuale = (valore / maxDistrib) * 100;
                         return (
                             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                <div style={{ width: 40, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right' }}>
-                                    {nome}
-                                </div>
+                                <div style={{ width: 40, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right' }}>{nome}</div>
                                 <div style={{ flex: 1, height: 20, background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                                    <div 
-                                        style={{ 
-                                            height: '100%', 
-                                            width: `${percentuale}%`, 
-                                            background: i === 0 || i === 6 ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--blue))',
-                                            borderRadius: 'var(--radius-sm)',
-                                            transition: 'width 0.5s ease'
-                                        }} 
-                                    />
+                                    <div style={{ height: '100%', width: `${percentuale}%`, background: i === 0 || i === 6 ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--blue))', borderRadius: 'var(--radius-sm)', transition: 'width 0.5s ease' }} />
                                 </div>
-                                <div style={{ width: 30, fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
-                                    {valore}
-                                </div>
+                                <div style={{ width: 30, fontSize: 12, fontWeight: 600, textAlign: 'right' }}>{valore}</div>
                             </div>
                         );
                     })}
@@ -1163,18 +980,15 @@ function StatisticheTab({ user, year, month, entries }) {
 }
 
 // ============================================================
-// APP PRINCIPALE
+// 11. APP PRINCIPALE
 // ============================================================
 
 function App() {
-    // --- STATE ---
     const [db, setDb] = useState(() => {
         try {
             const saved = localStorage.getItem('feriePermessi_v3');
             return saved ? JSON.parse(saved) : { users: [], currentUserId: null };
-        } catch {
-            return { users: [], currentUserId: null };
-        }
+        } catch { return { users: [], currentUserId: null }; }
     });
 
     const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
@@ -1183,22 +997,16 @@ function App() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
 
-    // --- UTILITY ---
     const currentUser = useMemo(() => {
         if (!db.currentUserId) return null;
         return db.users.find(u => u.id === db.currentUserId) || null;
     }, [db]);
 
-    const entries = useMemo(() => {
-        return currentUser?.entries || [];
-    }, [currentUser]);
+    const entries = useMemo(() => currentUser?.entries || [], [currentUser]);
 
-    // --- SALVATAGGIO ---
     const saveDb = useCallback((newDb) => {
         setDb(newDb);
         localStorage.setItem('feriePermessi_v3', JSON.stringify(newDb));
-        
-        // Sync su Firebase se loggato
         if (isLoggedIn && auth.currentUser) {
             const uid = auth.currentUser.uid;
             db.collection('feriePermessi_data').doc(uid).set({
@@ -1208,103 +1016,64 @@ function App() {
         }
     }, [isLoggedIn]);
 
-    // --- CRUD ENTRY ---
     const addEntry = useCallback((entry) => {
         if (!currentUser) return;
         const newEntry = { ...entry, id: generateId() };
-        const updatedUser = {
-            ...currentUser,
-            entries: [...(currentUser.entries || []), newEntry]
-        };
-        const newDb = {
-            ...db,
-            users: db.users.map(u => u.id === currentUser.id ? updatedUser : u)
-        };
+        const updatedUser = { ...currentUser, entries: [...(currentUser.entries || []), newEntry] };
+        const newDb = { ...db, users: db.users.map(u => u.id === currentUser.id ? updatedUser : u) };
         saveDb(newDb);
     }, [currentUser, db, saveDb]);
 
     const deleteEntry = useCallback((id) => {
         if (!currentUser) return;
-        const updatedUser = {
-            ...currentUser,
-            entries: (currentUser.entries || []).filter(e => e.id !== id)
-        };
-        const newDb = {
-            ...db,
-            users: db.users.map(u => u.id === currentUser.id ? updatedUser : u)
-        };
+        const updatedUser = { ...currentUser, entries: (currentUser.entries || []).filter(e => e.id !== id) };
+        const newDb = { ...db, users: db.users.map(u => u.id === currentUser.id ? updatedUser : u) };
         saveDb(newDb);
     }, [currentUser, db, saveDb]);
 
     const toggleObbligata = useCallback((id) => {
         if (!currentUser) return;
-        const updatedUser = {
-            ...currentUser,
-            entries: (currentUser.entries || []).map(e => 
-                e.id === id ? { ...e, obbligata: !e.obbligata } : e
-            )
-        };
-        const newDb = {
-            ...db,
-            users: db.users.map(u => u.id === currentUser.id ? updatedUser : u)
-        };
+        const updatedUser = { ...currentUser, entries: (currentUser.entries || []).map(e => e.id === id ? { ...e, obbligata: !e.obbligata } : e) };
+        const newDb = { ...db, users: db.users.map(u => u.id === currentUser.id ? updatedUser : u) };
         saveDb(newDb);
     }, [currentUser, db, saveDb]);
 
     const confirmSim = useCallback((id) => {
         if (!currentUser) return;
-        const updatedUser = {
-            ...currentUser,
-            entries: (currentUser.entries || []).map(e => 
-                e.id === id ? { ...e, sim: false } : e
-            )
-        };
-        const newDb = {
-            ...db,
-            users: db.users.map(u => u.id === currentUser.id ? updatedUser : u)
-        };
+        const updatedUser = { ...currentUser, entries: (currentUser.entries || []).map(e => e.id === id ? { ...e, sim: false } : e) };
+        const newDb = { ...db, users: db.users.map(u => u.id === currentUser.id ? updatedUser : u) };
         saveDb(newDb);
     }, [currentUser, db, saveDb]);
 
-    // --- FIREBASE SYNC ---
+    const updateUser = useCallback((updatedUser) => {
+        const newDb = { ...db, users: db.users.map(u => u.id === updatedUser.id ? updatedUser : u) };
+        saveDb(newDb);
+    }, [db, saveDb]);
+
     const syncFirebase = useCallback(async () => {
         if (!isLoggedIn || !auth.currentUser) {
             alert('Effettua il login prima di sincronizzare');
             return;
         }
-
         setIsLoading(true);
         try {
             const uid = auth.currentUser.uid;
             const doc = await db.collection('feriePermessi_data').doc(uid).get();
-            
             if (doc.exists) {
                 const remoteData = doc.data();
                 const localData = JSON.parse(localStorage.getItem('feriePermessi_v3') || '{}');
-                
-                // Confronta timestamp
                 if (remoteData.lastModified && (!localData.lastModified || remoteData.lastModified > localData.lastModified)) {
-                    // Remote è più recente
-                    const newDb = { ...remoteData };
-                    delete newDb.lastModified;
+                    const newDb = { ...remoteData }; delete newDb.lastModified;
                     setDb(newDb);
                     localStorage.setItem('feriePermessi_v3', JSON.stringify(newDb));
                     alert('✅ Dati sincronizzati dal cloud');
                 } else {
-                    // Local è più recente
-                    await db.collection('feriePermessi_data').doc(uid).set({
-                        ...localData,
-                        lastModified: new Date().toISOString()
-                    }, { merge: true });
+                    await db.collection('feriePermessi_data').doc(uid).set({ ...localData, lastModified: new Date().toISOString() }, { merge: true });
                     alert('✅ Dati caricati sul cloud');
                 }
             } else {
-                // Primo sync: carica local su cloud
                 const localData = JSON.parse(localStorage.getItem('feriePermessi_v3') || '{}');
-                await db.collection('feriePermessi_data').doc(uid).set({
-                    ...localData,
-                    lastModified: new Date().toISOString()
-                }, { merge: true });
+                await db.collection('feriePermessi_data').doc(uid).set({ ...localData, lastModified: new Date().toISOString() }, { merge: true });
                 alert('✅ Dati caricati sul cloud');
             }
         } catch (error) {
@@ -1314,12 +1083,10 @@ function App() {
         setIsLoading(false);
     }, [isLoggedIn]);
 
-    // --- AUTH ---
     const login = useCallback(() => {
         const provider = new firebase.auth.GoogleAuthProvider();
         auth.signInWithPopup(provider).then(result => {
             setIsLoggedIn(true);
-            // Carica dati dal cloud
             syncFirebase();
         }).catch(error => {
             console.error('Login error:', error);
@@ -1328,12 +1095,9 @@ function App() {
     }, [syncFirebase]);
 
     const logout = useCallback(() => {
-        auth.signOut().then(() => {
-            setIsLoggedIn(false);
-        }).catch(console.error);
+        auth.signOut().then(() => setIsLoggedIn(false)).catch(console.error);
     }, []);
 
-    // --- REGISTRAZIONE NUOVO UTENTE ---
     const registerUser = useCallback((name, dataInizioContratto, calcMode) => {
         const newUser = {
             id: generateId(),
@@ -1342,33 +1106,21 @@ function App() {
             calcMode: calcMode || '1',
             workdayConfig: { escludiSabato: true, escludiDomenica: true },
             festivita: getFestivitaItalia(new Date().getFullYear()),
-            anni: {
-                [new Date().getFullYear()]: { ferieAnnue: 26, permessiOreAnnui: 0 }
-            },
+            anni: { [new Date().getFullYear()]: { ferieAnnue: 26, permessiOreAnnui: 0 } },
             permessiCCNL: { anni02: 32, anni24: 68, anni5plus: 104 },
             entries: []
         };
-
-        const newDb = {
-            ...db,
-            users: [...db.users, newUser],
-            currentUserId: newUser.id
-        };
-
+        const newDb = { ...db, users: [...db.users, newUser], currentUserId: newUser.id };
         saveDb(newDb);
     }, [db, saveDb]);
 
-    // --- RENDER ---
     if (!currentUser) {
-        // Schermata di registrazione
         return (
             <div className="container" style={{ marginTop: 40 }}>
                 <div className="card" style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: 48, marginBottom: 12 }}>👋</div>
                     <h2 style={{ marginBottom: 8 }}>Benvenuto!</h2>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 20 }}>
-                        Configura il tuo profilo per iniziare
-                    </p>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 20 }}>Configura il tuo profilo per iniziare</p>
                     <form onSubmit={(e) => {
                         e.preventDefault();
                         const name = e.target.name.value;
@@ -1377,16 +1129,9 @@ function App() {
                         if (!name || !data) return alert('Compila tutti i campi');
                         registerUser(name, data, calc);
                     }}>
-                        <div className="form-group">
-                            <label>👤 Nome e Cognome</label>
-                            <input type="text" name="name" placeholder="Mario Rossi" required />
-                        </div>
-                        <div className="form-group">
-                            <label>📅 Data di assunzione</label>
-                            <input type="date" name="dataAssunzione" required />
-                        </div>
-                        <div className="form-group">
-                            <label>📋 Tipo contratto</label>
+                        <div className="form-group"><label>👤 Nome e Cognome</label><input type="text" name="name" placeholder="Mario Rossi" required /></div>
+                        <div className="form-group"><label>📅 Data di assunzione</label><input type="date" name="dataAssunzione" required /></div>
+                        <div className="form-group"><label>📋 Tipo contratto</label>
                             <select name="calcMode" required>
                                 <option value="1">Standard (×1)</option>
                                 <option value="1.2">CCNL Commercio (×1.2)</option>
@@ -1395,16 +1140,13 @@ function App() {
                         <button type="submit" className="btn-primary">🚀 Inizia</button>
                     </form>
                     <div style={{ marginTop: 16 }}>
-                        <button onClick={login} className="btn-secondary" style={{ width: '100%' }}>
-                            🔑 Accedi con Google per sync
-                        </button>
+                        <button onClick={login} className="btn-secondary" style={{ width: '100%' }}>🔑 Accedi con Google per sync</button>
                     </div>
                 </div>
             </div>
         );
     }
 
-    // --- MAIN APP ---
     return (
         <>
             <Header 
@@ -1414,7 +1156,6 @@ function App() {
                 onLogout={logout}
                 onSync={syncFirebase}
                 onUserChange={() => {
-                    // Cambia utente (versione semplificata)
                     const altri = db.users.filter(u => u.id !== currentUser.id);
                     if (altri.length === 0) return alert('Nessun altro utente');
                     const names = altri.map(u => u.name).join(', ');
@@ -1427,6 +1168,7 @@ function App() {
                         }
                     }
                 }}
+                onOpenSettings={() => setActiveTab('impostazioni')}
             />
             
             <MonthNavigator 
@@ -1475,16 +1217,88 @@ function App() {
                 <StatisticheTab 
                     user={currentUser}
                     year={currentYear}
-                    month={currentMonth + 1}
+                    month={currentMonth}
                     entries={entries}
                 />
+            )}
+
+            {activeTab === 'impostazioni' && (
+                <div className="container">
+                    <FestivitaManager user={currentUser} onUpdate={updateUser} />
+                    
+                    <div className="card">
+                        <div className="card-title">⚙️ Impostazioni generali</div>
+                        <div className="form-group">
+                            <label>Modalità calcolo ferie</label>
+                            <select 
+                                value={currentUser.calcMode || '1'} 
+                                onChange={(e) => {
+                                    const updated = { ...currentUser, calcMode: e.target.value };
+                                    updateUser(updated);
+                                }}
+                            >
+                                <option value="1">Standard (×1)</option>
+                                <option value="1.2">CCNL Commercio (×1.2)</option>
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label>Data inizio contratto</label>
+                            <input 
+                                type="date" 
+                                value={currentUser.dataInizioContratto || ''} 
+                                onChange={(e) => {
+                                    const updated = { ...currentUser, dataInizioContratto: e.target.value };
+                                    updateUser(updated);
+                                }}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={currentUser.workdayConfig?.escludiSabato !== false} 
+                                    onChange={(e) => {
+                                        const updated = { 
+                                            ...currentUser, 
+                                            workdayConfig: { 
+                                                ...currentUser.workdayConfig, 
+                                                escludiSabato: e.target.checked 
+                                            } 
+                                        };
+                                        updateUser(updated);
+                                    }}
+                                />
+                                Escludi Sabato
+                            </label>
+                        </div>
+                        <div className="form-group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={currentUser.workdayConfig?.escludiDomenica !== false} 
+                                    onChange={(e) => {
+                                        const updated = { 
+                                            ...currentUser, 
+                                            workdayConfig: { 
+                                                ...currentUser.workdayConfig, 
+                                                escludiDomenica: e.target.checked 
+                                            } 
+                                        };
+                                        updateUser(updated);
+                                    }}
+                                />
+                                Escludi Domenica
+                            </label>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     );
 }
 
 // ============================================================
-// RENDER
+// 12. RENDER
 // ============================================================
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
