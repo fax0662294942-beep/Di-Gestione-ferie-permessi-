@@ -848,77 +848,313 @@ function CalendarioTab({ user, year, month, entries }) {
     );
 }
 
-// --- TAB STATISTICHE ---
-function StatisticheTab({ user, year, month, entries }) {
-    const [periodo, setPeriodo] = useState('mese');
-    const [filterTipo, setFilterTipo] = useState('tutti');
-    const [filterCategoria, setFilterCategoria] = useState('tutte');
+// ============================================================
+// TAB STATISTICHE — VERSIONE COMPLETA CON FILTRI E GRAFICO
+// ============================================================
 
-    // Filtra entries per periodo
+function StatisticheTab({ user, year, month, entries }) {
+    const [periodo, setPeriodo] = useState('anno'); // 'mese' | 'anno' | 'totale'
+    const [filterTipo, setFilterTipo] = useState('tutti'); // 'tutti' | 'ferie' | 'permessi'
+    const [filterCategoria, setFilterCategoria] = useState('tutte'); // 'tutte' | 'obbligate' | 'richieste'
+
+    // --- FILTRO PERIODO ---
     const getEntriesPeriodo = () => {
         if (periodo === 'mese') {
-            return entries.filter(e => e.anno === year && e.mese === month);
+            return entries.filter(e => e.anno === year && e.mese === month + 1);
         } else if (periodo === 'anno') {
             return entries.filter(e => e.anno === year);
         } else {
-            return entries;
+            return entries; // totale storico
         }
     };
 
-    const filtered = getEntriesPeriodo();
+    const baseEntries = getEntriesPeriodo();
+
+    // --- FILTRO TIPO ---
+    const filterByTipo = (list) => {
+        if (filterTipo === 'ferie') return list.filter(e => e.tipo === 'ferie');
+        if (filterTipo === 'permessi') return list.filter(e => e.tipo === 'permesso' || e.tipo === 'permesso_pagato');
+        return list;
+    };
+
+    // --- FILTRO CATEGORIA ---
+    const filterByCategoria = (list) => {
+        if (filterCategoria === 'obbligate') return list.filter(e => e.obbligata);
+        if (filterCategoria === 'richieste') return list.filter(e => !e.obbligata);
+        return list;
+    };
+
+    // --- APPLICA FILTRI ---
+    const filtered = filterByCategoria(filterByTipo(baseEntries));
+
+    // --- SEPARAZIONE PER TIPO (per statistiche) ---
     const ferie = filtered.filter(e => e.tipo === 'ferie' && !e.sim);
     const permessi = filtered.filter(e => (e.tipo === 'permesso' || e.tipo === 'permesso_pagato') && !e.sim);
     const obbligate = filtered.filter(e => e.obbligata && !e.sim);
+    const richieste = filtered.filter(e => !e.obbligata && !e.sim);
 
+    // --- CALCOLI TOTALI ---
     const totalFerie = ferie.reduce((sum, e) => sum + e.qty, 0);
     const totalPermessi = permessi.reduce((sum, e) => sum + e.qty, 0);
     const totalObbligate = obbligate.reduce((sum, e) => sum + e.qty, 0);
-    const totalRichieste = totalFerie + totalPermessi;
+    const totalRichieste = richieste.reduce((sum, e) => sum + e.qty, 0);
+    const totaleGenerale = totalFerie + totalPermessi;
+
+    // --- DISTRIBUZIONE GIORNI SETTIMANA ---
+    const getDistribuzione = () => {
+        const giorni = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 0: 0 };
+        const giorniSettimana = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+
+        filtered.forEach(entry => {
+            // Per le ferie: conta i giorni effettivi nell'intervallo (escludendo weekend/festività)
+            if (entry.tipo === 'ferie') {
+                const start = new Date(entry.dateFrom);
+                const end = new Date(entry.dateTo);
+                const current = new Date(start);
+                while (current <= end) {
+                    const day = current.getDay();
+                    // Conta solo giorni feriali (Lun-Ven)
+                    if (day >= 1 && day <= 5) {
+                        giorni[day] = (giorni[day] || 0) + 1;
+                    }
+                    current.setDate(current.getDate() + 1);
+                }
+            } else {
+                // Per i permessi: conta il giorno singolo (dateFrom)
+                const day = new Date(entry.dateFrom).getDay();
+                giorni[day] = (giorni[day] || 0) + 1;
+            }
+        });
+
+        return giorni;
+    };
+
+    const distribuzione = getDistribuzione();
+    const maxDistrib = Math.max(1, ...Object.values(distribuzione));
+
+    // --- NOMI GIORNI ---
+    const giorniNomi = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
     return (
         <div className="container">
             <div className="card">
                 <div className="card-title">📊 Statistiche</div>
+
+                {/* --- FILTRI --- */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                    <select value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px' }}>
-                        <option value="mese">Mese</option>
-                        <option value="anno">Anno</option>
-                        <option value="totale">Totale storico</option>
+                    {/* Periodo */}
+                    <select 
+                        value={periodo} 
+                        onChange={(e) => setPeriodo(e.target.value)} 
+                        className="form-group" 
+                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
+                    >
+                        <option value="mese">📅 Mese</option>
+                        <option value="anno">📆 Anno</option>
+                        <option value="totale">📚 Totale</option>
                     </select>
-                    <select value={filterTipo} onChange={(e) => setFilterTipo(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px' }}>
-                        <option value="tutti">Tutti</option>
-                        <option value="ferie">🌴 Ferie</option>
-                        <option value="permessi">🕐 Permessi</option>
+
+                    {/* Tipo */}
+                    <select 
+                        value={filterTipo} 
+                        onChange={(e) => setFilterTipo(e.target.value)} 
+                        className="form-group" 
+                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
+                    >
+                        <option value="tutti">🌴+🕐 Tutti</option>
+                        <option value="ferie">🌴 Solo Ferie</option>
+                        <option value="permessi">🕐 Solo Permessi</option>
                     </select>
-                    <select value={filterCategoria} onChange={(e) => setFilterCategoria(e.target.value)} className="form-group" style={{ width: 'auto', padding: '8px 12px' }}>
-                        <option value="tutte">Tutte</option>
+
+                    {/* Categoria */}
+                    <select 
+                        value={filterCategoria} 
+                        onChange={(e) => setFilterCategoria(e.target.value)} 
+                        className="form-group" 
+                        style={{ width: 'auto', padding: '8px 12px', flex: 1, minWidth: 100 }}
+                    >
+                        <option value="tutte">📋 Tutte</option>
                         <option value="obbligate">🏢 Obbligate</option>
                         <option value="richieste">👤 Richieste</option>
                     </select>
                 </div>
 
+                {/* --- STATISTICHE FERIE --- */}
                 <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Obbligate vs Richieste</div>
-                    <div className="stats-bar">
-                        <div className="segment obbligate" style={{ width: totalRichieste > 0 ? `${(totalObbligate / totalRichieste) * 100}%` : '0%' }} />
-                        <div className="segment richieste-ferie" style={{ width: totalRichieste > 0 ? `${(totalFerie / totalRichieste) * 100}%` : '0%' }} />
-                        <div className="segment richieste-permessi" style={{ width: totalRichieste > 0 ? `${(totalPermessi / totalRichieste) * 100}%` : '0%' }} />
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>🌴 Ferie</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} gg 
+                        ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) 
+                        · {obbligate.length} episodi
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                        <span>🏢 Obbligate: {totalObbligate.toFixed(1)}</span>
-                        <span>🌴 Ferie: {totalFerie.toFixed(1)}</span>
-                        <span>🕐 Permessi: {totalPermessi.toFixed(1)}</span>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        <span style={{ color: 'var(--green)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} gg 
+                        ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) 
+                        · {richieste.length} episodi
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>
+                        Totale: {totaleGenerale.toFixed(1)} gg · {filtered.length} episodi
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <div style={{ background: 'var(--surface2)', padding: 12, borderRadius: 'var(--radius-sm)' }}>
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Totale episodi</div>
-                        <div style={{ fontSize: 24, fontWeight: 700 }}>{filtered.length}</div>
+                {/* --- STATISTICHE PERMESSI --- */}
+                <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>🕐 Permessi</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        <span style={{ color: 'var(--amber)' }}>🏢 Obbligate:</span> {totalObbligate.toFixed(1)} h 
+                        ({totaleGenerale > 0 ? ((totalObbligate / totaleGenerale) * 100).toFixed(0) : 0}%) 
+                        · {obbligate.length} episodi
                     </div>
-                    <div style={{ background: 'var(--surface2)', padding: 12, borderRadius: 'var(--radius-sm)' }}>
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Totale giorni/ore</div>
-                        <div style={{ fontSize: 24, fontWeight: 700 }}>{(totalFerie + totalPermessi).toFixed(1)}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        <span style={{ color: 'var(--blue)' }}>👤 Richieste:</span> {totalRichieste.toFixed(1)} h 
+                        ({totaleGenerale > 0 ? ((totalRichieste / totaleGenerale) * 100).toFixed(0) : 0}%) 
+                        · {richieste.length} episodi
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>
+                        Totale: {totaleGenerale.toFixed(1)} h · {filtered.length} episodi
+                    </div>
+                </div>
+
+                {/* --- BARRA OBBLIGATE VS RICHIESTE --- */}
+                <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                        📊 Obbligate vs Richieste
+                    </div>
+                    <div className="stats-bar">
+                        <div 
+                            className="segment obbligate" 
+                            style={{ 
+                                width: totaleGenerale > 0 ? `${(totalObbligate / totaleGenerale) * 100}%` : '0%',
+                                background: 'var(--amber)'
+                            }} 
+                        />
+                        <div 
+                            className="segment richieste" 
+                            style={{ 
+                                width: totaleGenerale > 0 ? `${(totalRichieste / totaleGenerale) * 100}%` : '0%',
+                                background: filterTipo === 'ferie' ? 'var(--green)' : filterTipo === 'permessi' ? 'var(--blue)' : 'linear-gradient(90deg, var(--green), var(--blue))'
+                            }} 
+                        />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                        <span>🏢 Obbligate: {totalObbligate.toFixed(1)}</span>
+                        <span>👤 Richieste: {totalRichieste.toFixed(1)}</span>
+                    </div>
+                </div>
+
+                {/* --- DISTRIBUZIONE GIORNI SETTIMANA --- */}
+                <div style={{ marginTop: 16 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
+                        📅 Distribuzione giorni settimana
+                    </div>
+
+                    {/* Filtri per distribuzione */}
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                        <button 
+                            className={`btn-secondary ${filterTipo === 'tutti' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterTipo === 'tutti' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterTipo === 'tutti' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterTipo('tutti')}
+                        >
+                            Ferie+Permessi
+                        </button>
+                        <button 
+                            className={`btn-secondary ${filterTipo === 'ferie' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterTipo === 'ferie' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterTipo === 'ferie' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterTipo('ferie')}
+                        >
+                            🌴 Ferie
+                        </button>
+                        <button 
+                            className={`btn-secondary ${filterTipo === 'permessi' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterTipo === 'permessi' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterTipo === 'permessi' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterTipo('permessi')}
+                        >
+                            🕐 Permessi
+                        </button>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                        <button 
+                            className={`btn-secondary ${filterCategoria === 'tutte' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterCategoria === 'tutte' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterCategoria === 'tutte' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterCategoria('tutte')}
+                        >
+                            📋 Tutte
+                        </button>
+                        <button 
+                            className={`btn-secondary ${filterCategoria === 'obbligate' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterCategoria === 'obbligate' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterCategoria === 'obbligate' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterCategoria('obbligate')}
+                        >
+                            🏢 Obbligate
+                        </button>
+                        <button 
+                            className={`btn-secondary ${filterCategoria === 'richieste' ? 'active' : ''}`}
+                            style={{ 
+                                padding: '4px 12px', 
+                                fontSize: 12,
+                                background: filterCategoria === 'richieste' ? 'var(--surface3)' : 'transparent',
+                                borderColor: filterCategoria === 'richieste' ? 'var(--border)' : 'transparent'
+                            }}
+                            onClick={() => setFilterCategoria('richieste')}
+                        >
+                            👤 Richieste
+                        </button>
+                    </div>
+
+                    {/* Grafico a barre orizzontali */}
+                    {giorniNomi.map((nome, i) => {
+                        const valore = distribuzione[i] || 0;
+                        const percentuale = (valore / maxDistrib) * 100;
+                        return (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <div style={{ width: 40, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right' }}>
+                                    {nome}
+                                </div>
+                                <div style={{ flex: 1, height: 20, background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                                    <div 
+                                        style={{ 
+                                            height: '100%', 
+                                            width: `${percentuale}%`, 
+                                            background: i === 0 || i === 6 ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--blue))',
+                                            borderRadius: 'var(--radius-sm)',
+                                            transition: 'width 0.5s ease'
+                                        }} 
+                                    />
+                                </div>
+                                <div style={{ width: 30, fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
+                                    {valore}
+                                </div>
+                            </div>
+                        );
+                    })}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
+                        Totale giorni conteggiati: {Object.values(distribuzione).reduce((a, b) => a + b, 0)}
                     </div>
                 </div>
             </div>
